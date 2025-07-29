@@ -393,8 +393,9 @@ def create_process_a(count):
 def exec_win(count):
     return (
         f"exec_win_{count}:"  #
-        f"  push  ebx                       ;"  # Push lpCmdLine
+        f"  xor   ecx, ecx                  ;"  # NULL ECX
         f"  push  eax                       ;"  # Push uCmdShow
+        f"  push  ebx                       ;"  # Push lpCmdLine
         f"  call dword ptr [ebp+0x18]       ;"  # Call ExecWin
     )
 
