@@ -5,18 +5,18 @@ Author: wh1rl3y
 Date: 2025-07-07
 """
 import socket, sys
-import ctypes, struct, numpy
+import ctypes, struct
 
 SUCCESS = 'success'
 FAIL = 'fail'
 
 
 def ror_str(byte, count):
-    binb = numpy.base_repr(byte, 2).zfill(32)
+    binb = bin(byte)[2:].zfill(32)
     while count > 0:
         binb = binb[-1] + binb[0:-1]
         count -= 1
-    return (int(binb, 2))
+    return int(binb, 2)
 
 def calculate_function_hash(function_name, verbose=False):
     print_info(f'Generate hash for {function_name}', SUCCESS, 1, verbose)

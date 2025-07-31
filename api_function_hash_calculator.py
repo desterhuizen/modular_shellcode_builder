@@ -1,8 +1,16 @@
+"""
+This script calculates a hash value for a given input string using a custom algorithm.
+The algorithm involves summing the ASCII values of the characters in the string,
+and performing a right rotate operation on the sum after each character, except for the last one.
+
+The hash values are used by the shell_code_blocks.py script to find functions in the system API that match the hash.
+"""
+
 #!/usr/bin/python
-import numpy, sys
+import sys
 
 def ror_str(byte, count):
-    binb = numpy.base_repr(byte, 2).zfill(32)
+    binb = bin(byte)[2:].zfill(32)
     while count > 0:
         binb = binb[-1] + binb[0:-1]
         count -= 1
@@ -14,7 +22,7 @@ if __name__ == '__main__':
     except IndexError:
         print("Usage: %s INPUTSTRING" % sys.argv[0])
         sys.exit()
-    # Initialize variables
+
     edx = 0x00
     ror_count = 0
     for eax in esi:
