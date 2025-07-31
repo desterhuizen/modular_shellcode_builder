@@ -8,13 +8,7 @@ The hash values are used by the shell_code_blocks.py script to find functions in
 
 #!/usr/bin/python
 import sys
-
-def ror_str(byte, count):
-    binb = bin(byte)[2:].zfill(32)
-    while count > 0:
-        binb = binb[-1] + binb[0:-1]
-        count -= 1
-    return (int(binb, 2))
+from utils import calculate_function_hash
 
 if __name__ == '__main__':
     try:
@@ -23,11 +17,5 @@ if __name__ == '__main__':
         print("Usage: %s INPUTSTRING" % sys.argv[0])
         sys.exit()
 
-    edx = 0x00
-    ror_count = 0
-    for eax in esi:
-        edx = edx + ord(eax)
-        if ror_count < len(esi)-1:
-            edx = ror_str(edx, 0xd)
-        ror_count += 1
-    print(hex(edx))
+    edx = calculate_function_hash(esi)
+    print(edx)
