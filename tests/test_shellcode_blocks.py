@@ -4,6 +4,7 @@ import sys
 
 import shellcode_blocks
 
+
 class TestShellcodeBlocks(unittest.TestCase):
     def test_parse_arguments_defaults(self):
         test_args = ['prog']
@@ -47,7 +48,7 @@ class TestShellcodeBlocks(unittest.TestCase):
         args.force_break = False
         args.verbose = False
         args.force_break_functions = False
-        asm = shellcode_blocks.generate_shellcode(args)
+        asm = shellcode_blocks.generate_shellcode(args, bad_char_list=[])
         self.assertIn('start;', asm)
         self.assertIn('sock;', asm)
 
@@ -66,10 +67,42 @@ class TestShellcodeBlocks(unittest.TestCase):
         args.force_break = False
         args.verbose = False
         args.force_break_functions = False
-        asm = shellcode_blocks.generate_shellcode(args)
+        asm = shellcode_blocks.generate_shellcode(args, bad_char_list=[])
         self.assertIn('cmdstr;', asm)
         self.assertIn('startup;', asm)
         self.assertIn('proc;', asm)
+
+    def test_parse_bad_chars(self):
+        # Test with no bad chars
+        args = MagicMock()
+        args.bad_char = None
+        self.assertEqual(shellcode_blocks.parse_bad_chars(args), [])
+
+        # Test with valid bad chars
+        args.bad_char = [['41', 'neg'], ['42', 'inc'], ['43', 'dec']]
+        bad_chars = shellcode_blocks.parse_bad_chars(args)
+        self.assertEqual(len(bad_chars), 3)
+        self.assertEqual(bad_chars[0], {'char': 0x41, 'func': 'neg'})
+        self.assertEqual(bad_chars[1], {'char': 0x42, 'func': 'inc'})
+        self.assertEqual(bad_chars[2], {'char': 0x43, 'func': 'dec'})
+
+        # Test with invalid method
+        args.bad_char = [['44', 'invalid']]
+        bad_chars = shellcode_blocks.parse_bad_chars(args)
+        self.assertFalse(bad_chars)
+
+        # Test with invalid hex value
+        args.bad_char = [['XYZ', 'neg']]
+        bad_chars = shellcode_blocks.parse_bad_chars(args)
+        self.assertFalse(bad_chars)
+
+        # Test with increment/decrement methods
+        args.bad_char = [['45', 'inc3'], ['46', 'dec2']]
+        bad_chars = shellcode_blocks.parse_bad_chars(args)
+        self.assertEqual(len(bad_chars), 2)
+        self.assertEqual(bad_chars[0], {'char': 0x45, 'func': 'inc', 'n': 3})
+        self.assertEqual(bad_chars[1], {'char': 0x46, 'func': 'dec', 'n': 2})
+
 
 if __name__ == '__main__':
     unittest.main()

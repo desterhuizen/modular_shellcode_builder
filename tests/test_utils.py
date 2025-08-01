@@ -5,8 +5,9 @@ import struct
 from utils import (
     ror_str, calculate_function_hash, get_ip_hex, get_port_hex,
     make_print_friendly_asm, change_command_to_memory_hex, create_command_string, print_info, SUCCESS, FAIL,
-    add_negated_value, create_asm_start, resolve_kernel32_functions
+    add_negated_value, create_asm_start, resolve_kernel32_functions, apply_bad_char_actions
 )
+
 
 class TestUtils(unittest.TestCase):
     def test_ror_str(self):
@@ -74,6 +75,7 @@ class TestUtils(unittest.TestCase):
         with patch('sys.stdout', new=io.StringIO()) as fake_out:
             print_info('Test', SUCCESS, 0, True)
             self.assertIn('[+] Test', fake_out.getvalue())
+
     def test_print_info_success_1(self):
         with patch('sys.stdout', new=io.StringIO()) as fake_out:
             print_info('Test', SUCCESS, 1, True)
@@ -84,9 +86,7 @@ class TestUtils(unittest.TestCase):
             print_info('Test', FAIL, 0, True)
             self.assertIn('[-] Test', fake_out.getvalue())
 
-
     def test_add_negated_value(self):
-
         # Example hex for 'cmd\0' in little-endian: ff6d6400
         cmd_hex = '636d64ff'
         asm = add_negated_value(cmd_hex, verbose=False)
@@ -129,5 +129,62 @@ class TestUtils(unittest.TestCase):
 
         asm_verbose = resolve_kernel32_functions(verbose=True)
         self.assertIsInstance(asm_verbose, str)
+
+    def test_apply_bad_char_actions(self):
+        # Test bytes with some values we want to modify
+        test_chunk = b'\x00\x09\x02\x03\x04\x05\x08\x00'
+
+        # Define bad characters and actions
+        bad_chars = [
+            {'char': 0, 'func': 'neg'},  # Negate 0x00 -> 0xFF
+            {'char': 2, 'func': 'inc'},  # Increment 0x02 by 1 -> 0x03
+            {'char': 3, 'func': 'dec'},  # Decrement 0x03 by 1 -> 0x02
+            {'char': 4, 'func': 'inc', 'n': 2},  # Increment 0x04 by 2 -> 0x06
+            {'char': 5, 'func': 'dec', 'n': 2}  # Decrement 0x05 by 2 -> 0x03
+
+        ]
+
+        # Apply the bad character actions
+        modified_chunk, modifications = apply_bad_char_actions(test_chunk, bad_chars)
+
+        # Check the modified chunk
+        self.assertEqual(modified_chunk, b'\xff\x09\x03\x02\x06\x03\x08\xff')
+
+        # Check modifications list contains correct information
+        self.assertEqual(len(modifications), 6)
+
+        # Verify first modification (negation of 0x00)
+        self.assertEqual(modifications[0]['pos'], 0)
+        self.assertEqual(modifications[0]['orig'], 0x0)
+        self.assertEqual(modifications[0]['action'], 'neg')
+
+        # Verify second modification (increment 0x02)
+        self.assertEqual(modifications[1]['pos'], 2)
+        self.assertEqual(modifications[1]['orig'], 0x02)
+        self.assertEqual(modifications[1]['action'], 'inc')
+
+        # Verify third modification (decrement 0x03)
+        self.assertEqual(modifications[2]['pos'], 3)
+        self.assertEqual(modifications[2]['orig'], 0x03)
+        self.assertEqual(modifications[2]['action'], 'dec')
+
+        # Verify incrementing 0x04 by 2
+        self.assertEqual(modifications[3]['pos'], 4)
+        self.assertEqual(modifications[3]['orig'], 0x04)
+        self.assertEqual(modifications[3]['action'], 'inc')
+        self.assertEqual(modifications[3]['n'], 2)
+
+        # Verify decrementing 0x05 by 2
+        self.assertEqual(modifications[4]['pos'], 5)
+        self.assertEqual(modifications[4]['orig'], 0x05)
+        self.assertEqual(modifications[4]['action'], 'dec')
+        self.assertEqual(modifications[4]['n'], 2)
+
+        # Verify last modification (negation of 0x00)
+        self.assertEqual(modifications[5]['pos'], 7)
+        self.assertEqual(modifications[5]['orig'], 0x0)
+        self.assertEqual(modifications[5]['action'], 'neg')
+
+
 if __name__ == '__main__':
     unittest.main()
